@@ -16,6 +16,7 @@
     NSString *_notifySdkStateCallbackId;
     NSString *_setPushModeCallbackId;
     NSString *_aliasActionCallbackId;
+    NSString *_didReceiveIncomingVoipPushCallback;
 }
 
 @end
@@ -29,6 +30,7 @@
         _sendMessageCallback = nil;
         _occurErrorCallbackId = nil;
         _aliasActionCallbackId = nil;
+        _didReceiveIncomingVoipPushCallback = nil;
     }
     return self;
 }
@@ -224,6 +226,7 @@
 
     NSArray *array = [NSArray arrayWithObjects:payloadMsg, taskId, msgId, @(offLine), appId, nil];
     CDVPluginResult *pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsMultipart:array];
+    [pluginResult setKeepCallbackAsBool:YES];
     [self.commandDelegate sendPluginResult:pluginResult callbackId:_receivePayloadCallbackId];
 }
 
@@ -296,6 +299,47 @@
                       @"desc" : error.localizedDescription }
     : nil;
 }
+
+#pragma mark - VOIP related
+
+// 实现 PKPushRegistryDelegate 协议方法
+
+/** 系统返回VOIPToken，并提交个推服务器 */
+- (void)pushRegistry:(PKPushRegistry *)registry didUpdatePushCredentials:(PKPushCredentials *)credentials forType:(NSString *)type {
+    // [ GTSDK ]：（新版）向个推服务器注册 VoipToken
+    [GeTuiSdk registerVoipTokenCredentials:credentials.token];
+        
+    // [ 测试代码 ] 日志打印DeviceToken
+    NSLog(@"[ TestDemo ] [ VoipToken(NSData) ]: %@\n\n", credentials.token);
+}
+
+/** 接收VOIP推送中的payload进行业务逻辑处理（一般在这里调起本地通知实现连续响铃、接收视频呼叫请求等操作），并执行个推VOIP回执统计 */
+- (void)pushRegistry:(PKPushRegistry *)registry didReceiveIncomingPushWithPayload:(PKPushPayload *)payload forType:(NSString *)type {
+    //个推VOIP回执统计
+    [GeTuiSdk handleVoipNotification:payload.dictionaryPayload];
+    
+    //TODO:接受VOIP推送中的payload内容进行具体业务逻辑处理
+    NSLog(@"[Voip Payload]:%@,%@", payload, payload.dictionaryPayload);
+    
+    if (!_didReceiveIncomingVoipPushCallback) {
+        return;
+    }
+    
+    NSArray *array = [NSArray arrayWithObjects:payload.dictionaryPayload[@"payload"], payload.dictionaryPayload[@"_gmid_"], type, nil];
+    CDVPluginResult *pluginResult = [CDVPluginResult resultWithStatus:CDVCommandStatus_OK messageAsMultipart:array];
+    [pluginResult setKeepCallbackAsBool:YES];
+    [self.commandDelegate sendPluginResult:pluginResult callbackId:_didReceiveIncomingVoipPushCallback];
+}
+
+- (void)voipRegistrationWithVoipPushCallback:(CDVInvokedUrlCommand *)command {
+    dispatch_queue_t mainQueue = dispatch_get_main_queue();
+    PKPushRegistry *voipRegistry = [[PKPushRegistry alloc] initWithQueue:mainQueue];
+    voipRegistry.delegate = self;
+    // Set the push type to VoIP
+    voipRegistry.desiredPushTypes = [NSSet setWithObject:PKPushTypeVoIP];
+    _didReceiveIncomingVoipPushCallback = command.callbackId;
+}
+
 
 
 @end
